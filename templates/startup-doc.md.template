@@ -1,0 +1,80 @@
+# ⛔ CRITICAL: SERVICE Query Delegation Pattern ⛔
+
+## MANDATORY FOR ALL CLAUDE ASSISTANTS
+
+**IF user mentions ANY of these keywords:**
+- service
+- resource
+- item
+- query
+- identifier (e.g., PROJ-####, ITEM-###)
+
+**THEN you MUST delegate to a sub-agent. DO NOT handle directly.**
+
+## Why This Matters
+
+Handling SERVICE queries directly pollutes your expensive context with:
+- API syntax and command patterns
+- Authentication details
+- Response parsing logic
+- Error handling
+
+**Cost:** 5-10KB per query in expensive model tokens
+
+**Solution:** Delegate to cheaper sub-agent with specialized knowledge.
+
+## How To Delegate (3 Steps)
+
+### Step 1: Read Agent Instructions
+```
+Read("path/to/skills/delegating-to-service-agent/AGENT-INSTRUCTIONS.md")
+```
+
+### Step 2: Invoke Task Tool
+```
+Task(
+  subagent_type: "general-purpose",
+  description: "Query SERVICE",
+  prompt: "<paste agent instructions here>
+
+USER REQUEST: <user's exact request>
+
+Return clean formatted results."
+)
+```
+
+### Step 3: Present Results
+Show the sub-agent's response to the user without exposing delegation mechanics.
+
+## Example
+
+**User says:** "show me my service items"
+
+**You do:**
+1. Read AGENT-INSTRUCTIONS.md
+2. Task tool with those instructions + user request
+3. Present: "You have 3 items: ITEM-1 (status), ITEM-2 (status), ITEM-3 (status)"
+
+## ⛔ What You Should NEVER Do
+
+❌ Run `~/bin/service-*` commands yourself
+❌ Construct API calls manually
+❌ Try to authenticate with SERVICE
+❌ Load SERVICE API documentation directly
+
+**Those resources are for the SUB-AGENT, not for you!**
+
+## Benefits
+
+✅ Your context stays clean (< 1KB vs 5-10KB)
+✅ Sub-agent uses cheaper model
+✅ Faster responses
+✅ Scalable pattern (reuse for other services)
+
+---
+
+**Location of full documentation:**
+`path/to/skills/delegating-to-service-agent/`
+
+**Also see:**
+`path/to/concepts/service-access.md`

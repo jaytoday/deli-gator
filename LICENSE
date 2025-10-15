@@ -1,0 +1,45 @@
+MIT License (Modified for Documentation and AI-Generated Content)
+
+Copyright (c) 2025 Ryan Nelson
+
+This repository contains primarily documentation, guides, implementation patterns,
+and shell script templates that were created with substantial assistance from AI
+assistants (Claude, Anthropic).
+
+ACKNOWLEDGMENTS:
+- Inspired by and builds upon the "Superpowers" framework for AI assistant skills
+- Inspired by the Microsoft "Amplifier" AI framework (no explicit code derived)
+- The tmux-pair-programming/session-driving pattern is original work by Ryan Nelson
+- Heavy use of SaaS APIs and CLI tooling patterns derive from Ryan Nelson's career
+  as a systems engineer, operator, and incident responder
+- Much of the prior art in the AI assistant space is also AI-generated
+
+TRADEMARKS:
+- The name "Deli-Gator" is original and copyright Ryan Nelson (2025)
+- The Deli-Gator logo (sandwich-alligator design) is original and copyright
+  Ryan Nelson (2025), created with assistance from AI tools
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this documentation, guides, templates, and associated files (the "Materials"),
+to deal in the Materials without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Materials, and to permit persons to whom the Materials are
+furnished to do so, subject to the following conditions:
+
+The above copyright notice, this permission notice, and the acknowledgments
+section shall be included in all copies or substantial portions of the Materials.
+
+THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE MATERIALS OR THE USE OR OTHER DEALINGS IN THE
+MATERIALS.
+
+---
+
+Note: The "Deli-Gator" name and logo are trademarks and may not be used to
+represent derivative works without permission. The documentation patterns and
+implementation guides may be freely adapted and used under the MIT license terms
+above.

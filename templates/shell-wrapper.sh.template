@@ -1,0 +1,138 @@
+#!/bin/bash
+# ~/bin/SERVICE-OPERATION - Brief description of what this does
+#
+# Usage: SERVICE-OPERATION [OPTIONS]
+#
+# Examples:
+#   SERVICE-OPERATION --list
+#   SERVICE-OPERATION --show ID
+#
+# Created: YYYY-MM-DD
+
+set -euo pipefail
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+
+# Embedded authentication (no external dependencies)
+API_TOKEN="${SERVICE_API_TOKEN:-your-token-here}"
+API_BASE_URL="${SERVICE_API_URL:-https://api.example.com}"
+ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-your-account-id}"
+
+# ==============================================================================
+# FUNCTIONS
+# ==============================================================================
+
+show_usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Description:
+  Brief description of what this script does
+
+Options:
+  --list              List all items
+  --show ID           Show specific item by ID
+  --search QUERY      Search for items matching query
+  --help              Show this help message
+
+Examples:
+  $(basename "$0") --list
+  $(basename "$0") --show ITEM-123
+  $(basename "$0") --search "keyword"
+
+Environment Variables:
+  SERVICE_API_TOKEN   API authentication token
+  SERVICE_API_URL     API base URL (default: $API_BASE_URL)
+  SERVICE_ACCOUNT_ID  Account/organization ID
+
+EOF
+}
+
+# Guard rail: Check authentication
+check_auth() {
+    if [[ "$API_TOKEN" == "your-token-here" ]]; then
+        echo "❌ Error: API token not configured"
+        echo "Set SERVICE_API_TOKEN environment variable or edit this script"
+        exit 1
+    fi
+}
+
+# Guard rail: Confirm destructive operations
+confirm_action() {
+    local message="$1"
+    echo "⚠️  $message"
+    read -p "Continue? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+}
+
+# ==============================================================================
+# MAIN OPERATIONS
+# ==============================================================================
+
+list_items() {
+    curl -s -H "Authorization: Bearer $API_TOKEN" \
+        "$API_BASE_URL/items" \
+        | jq -r '.items[] | "\(.id): \(.name) [\(.status)]"'
+}
+
+show_item() {
+    local item_id="$1"
+    curl -s -H "Authorization: Bearer $API_TOKEN" \
+        "$API_BASE_URL/items/$item_id" \
+        | jq -r '"\(.id): \(.name)\nStatus: \(.status)\nCreated: \(.created_at)"'
+}
+
+search_items() {
+    local query="$1"
+    curl -s -H "Authorization: Bearer $API_TOKEN" \
+        -G --data-urlencode "q=$query" \
+        "$API_BASE_URL/search" \
+        | jq -r '.results[] | "\(.id): \(.name)"'
+}
+
+# ==============================================================================
+# MAIN
+# ==============================================================================
+
+main() {
+    check_auth
+
+    case "${1:-}" in
+        --list)
+            list_items
+            ;;
+        --show)
+            if [[ -z "${2:-}" ]]; then
+                echo "❌ Error: --show requires an ID"
+                show_usage
+                exit 1
+            fi
+            show_item "$2"
+            ;;
+        --search)
+            if [[ -z "${2:-}" ]]; then
+                echo "❌ Error: --search requires a query"
+                show_usage
+                exit 1
+            fi
+            search_items "$2"
+            ;;
+        --help|-h|"")
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo "❌ Error: Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
