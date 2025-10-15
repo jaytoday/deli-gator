@@ -1,5 +1,7 @@
 <div align="center">
   <img src="logo.png" alt="Deli-Gator Logo" width="400">
+
+  **NEW: [Blog post added](docs/architecture-blog-post.md)** - Deep dive into the delegation pattern
 </div>
 
 # Deli-Gator: AI Assistant Delegation Architecture
