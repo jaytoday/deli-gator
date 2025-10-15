@@ -1,0 +1,61 @@
+#!/bin/bash
+# Show Acme Jira issue details
+# Usage: issuetracker-show PROJ-1234
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$JIRA_API_TOKEN" ]]; then
+        TOKEN="$JIRA_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/JIRA API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/jira-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set JIRA_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+
+if [ $# -eq 0 ]; then
+  echo "Usage: issuetracker-show ISSUE-KEY"
+  echo "Example: issuetracker-show PROJ-1234"
+  exit 1
+fi
+
+ISSUE_KEY="$1"
+
+echo "Fetching $ISSUE_KEY..."
+
+curl --http1.1 -s \
+  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | base64)" \
+  -H "Accept: application/json" \
+  "https://example.atlassian.net/rest/api/3/issue/$ISSUE_KEY" | \
+  jq -r '
+    if .errorMessages then
+      "Error: " + (.errorMessages | join(", "))
+    else
+      "Key:      \(.key)\n" +
+      "Summary:  \(.fields.summary)\n" +
+      "Status:   \(.fields.status.name)\n" +
+      "Assignee: \(.fields.assignee.displayName // "Unassigned")\n" +
+      "Updated:  \(.fields.updated)\n" +
+      "URL:      https://example.atlassian.net/browse/\(.key)"
+    end
+  '

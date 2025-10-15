@@ -1,0 +1,213 @@
+#!/bin/bash
+# monitoring-alerts - List active alerts and issues
+#
+# Usage:
+#   monitoring-alerts                  # List all active alerts
+#   monitoring-alerts --critical       # Only critical priority
+#   monitoring-alerts --all            # Include closed issues
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$NEWRELIC_API_TOKEN" ]]; then
+        TOKEN="$NEWRELIC_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/NEWRELIC API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/newrelic-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set NEWRELIC_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+# Default account ID
+ACCOUNT_ID="${NEWRELIC_ACCOUNT_ID:-1234567}"
+STATES="ACTIVAAcme, CREAAcme"
+PRIORITY_FILTER=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --account)
+      ACCOUNT_ID="$2"
+      shift 2
+      ;;
+    --critical)
+      PRIORITY_FILTER="CRITICAL"
+      shift
+      ;;
+    --high)
+      PRIORITY_FILTER="HIGH"
+      shift
+      ;;
+    --all)
+      STATES="ACTIVAAcme, CREAAcme, CLOSED"
+      shift
+      ;;
+    --help|-h)
+      cat <<'EOF'
+monitoring-alerts - List active alerts and issues
+
+USAGE:
+  monitoring-alerts [OPTIONS]
+
+OPTIONS:
+  --account ID    Account ID (default: 1234567)
+  --critical      Show only CRITICAL priority alerts
+  --high          Show only HIGH priority alerts
+  --all           Include closed alerts
+  --help, -h      Show this help
+
+EXAMPLES:
+  # List all active alerts
+  monitoring-alerts
+
+  # Show only critical priority alerts
+  monitoring-alerts --critical
+
+  # Include closed alerts in results
+  monitoring-alerts --all
+
+OUTPUT:
+  Lists alert issues with:
+  - Issue ID
+  - Title/description
+  - Priority (CRITICAL, HIGH, MEDIUM, LOW)
+  - State (ACTIVAAcme, CREAAcme, CLOSED)
+  - Alert sources
+  - Duration (how long it's been active)
+
+PRIORITY LEVELS:
+  - CRITICAL: Requires immediate attention
+  - HIGH: Important, address soon
+  - MEDIUM: Monitor situation
+  - LOW: Informational
+
+NOTES:
+  - Uses New Relic AI Issues API for alert correlation
+  - Active alerts have state ACTIVAAcme or CREAAcme
+  - Results show alert sources and duration
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Build GraphQL query
+GRAPHQL_QUERY=$(cat <<EOF
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      aiIssues {
+        issues(filter: {states: [${STATES}]}) {
+          issues {
+            issueId
+            title
+            state
+            priority
+            sources
+            createdAt
+            updatedAt
+            activatedAt
+            closedAt
+          }
+        }
+      }
+    }
+  }
+}
+EOF
+)
+
+# Execute query
+RESPONSE=$(newrelic nerdgraph query "$GRAPHQL_QUERY")
+
+# Check for errors
+if echo "$RESPONSE" | jq -e '.errors' > /dev/null 2>&1; then
+  echo "Error querying New Relic:" >&2
+  echo "$RESPONSE" | jq -r '.errors[].message' >&2
+  exit 1
+fi
+
+# Parse and format results
+ISSUES=$(echo "$RESPONSE" | jq -r '.data.actor.account.aiIssues.issues.issues')
+
+# Check if we have any issues
+ISSUE_COUNT=$(echo "$ISSUES" | jq 'length')
+
+if [ "$ISSUE_COUNT" -eq 0 ]; then
+  echo "No active alerts found."
+  exit 0
+fi
+
+# Filter by priority if specified
+if [ -n "$PRIORITY_FILTER" ]; then
+  ISSUES=$(echo "$ISSUES" | jq --arg priority "$PRIORITY_FILTER" '[.[] | select(.priority == $priority)]')
+  ISSUE_COUNT=$(echo "$ISSUES" | jq 'length')
+
+  if [ "$ISSUE_COUNT" -eq 0 ]; then
+    echo "No $PRIORITY_FILTER priority alerts found."
+    exit 0
+  fi
+fi
+
+# Calculate durations and format output
+echo "$ISSUES" | jq -r '
+  def time_ago(ts):
+    if ts == null then "N/A"
+    else
+      (now - (ts / 1000)) |
+      if . < 3600 then "\(. / 60 | floor) minutes"
+      elif . < 86400 then "\(. / 3600 | floor) hours"
+      else "\(. / 86400 | floor) days"
+      end
+    end;
+
+  # Group by priority
+  group_by(.priority) |
+  map({
+    priority: .[0].priority,
+    count: length,
+    issues: .
+  }) |
+  sort_by(.priority) |
+  reverse |
+  map(
+    "\n\(.priority) (\(.count)):\n\n" +
+    (
+      .issues |
+      to_entries |
+      map(
+        "  \(.key + 1). \(.value.title // "Unnamed alert")\n" +
+        "     Priority: \(.value.priority) | State: \(.value.state)\n" +
+        "     Sources: \(.value.sources | join(", "))\n" +
+        "     Active for: \(.value.activatedAt // .value.createdAt | time_ago)\n"
+      ) |
+      join("\n")
+    )
+  ) |
+  join("\n")
+' | sed '/^$/d'
+
+echo ""
+echo "Total: $ISSUE_COUNT active alert(s)"

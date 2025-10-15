@@ -1,0 +1,132 @@
+#!/bin/bash
+# monitoring-drop-rules - List and manage NRQL drop rules
+#
+# Usage:
+#   monitoring-drop-rules              # List all drop rules
+#   monitoring-drop-rules --summary    # Summarized view
+#   monitoring-drop-rules --account ID # Specify account
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$NEWRELIC_API_TOKEN" ]]; then
+        TOKEN="$NEWRELIC_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/NEWRELIC API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/newrelic-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set NEWRELIC_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+# Default account ID
+ACCOUNT_ID="${NEWRELIC_ACCOUNT_ID:-1234567}"
+FORMAT="json"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --account)
+      ACCOUNT_ID="$2"
+      shift 2
+      ;;
+    --summary)
+      FORMAT="summary"
+      shift
+      ;;
+    --help|-h)
+      cat <<'EOF'
+monitoring-drop-rules - List and manage NRQL drop rules
+
+USAGE:
+  monitoring-drop-rules [OPTIONS]
+
+OPTIONS:
+  --account ID    Account ID (default: 1234567)
+  --summary       Show summarized view with jq formatting
+  --help, -h      Show this help
+
+EXAMPLES:
+  # List all drop rules (raw JSON)
+  monitoring-drop-rules
+
+  # Show summary with descriptions
+  monitoring-drop-rules --summary
+
+  # Check drop rules for specific account
+  monitoring-drop-rules --account 1234567
+
+OUTPUT:
+  Lists all NRQL drop rules including:
+  - Rule ID
+  - Description
+  - NRQL query
+  - Action (DROP_DATA)
+  - Created by/at
+
+NOTES:
+  - Drop rules filter logs before they're ingested
+  - Helps manage data ingest costs
+  - Account defaults to Acme production (1234567)
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Fetch drop rules
+RULES_JSON=$(newrelic nerdgraph query '{
+  actor {
+    account(id: '"${ACCOUNT_ID}"') {
+      nrqlDropRules {
+        list {
+          rules {
+            id
+            nrql
+            accountId
+            action
+            description
+            createdBy
+            createdAt
+          }
+          error {
+            reason
+            description
+          }
+        }
+      }
+    }
+  }
+}')
+
+if [ "$FORMAT" = "summary" ]; then
+  # Pretty print with jq
+  echo "$RULES_JSON" | jq -r '
+    .data.actor.account.nrqlDropRules.list.rules[] |
+    "Name: \(.description // "No description")\nID: \(.id)\nAction: \(.action)\nQuery: \(.nrql)\nCreated: \(.createdAt)\n---"
+  '
+else
+  # Raw JSON output
+  echo "$RULES_JSON"
+fi

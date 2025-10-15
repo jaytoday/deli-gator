@@ -1,0 +1,75 @@
+#!/bin/bash
+# List S3 buckets or objects
+# Usage: cloud-s3-list [BUCKET] [--prefix PREFIX] [--profile PROFILE]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$AWS_API_TOKEN" ]]; then
+        TOKEN="$AWS_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/AWS API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/aws-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set AWS_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+PROFILE="${AWS_PROFILE:-default}"
+BUCKET=""
+PREFIX=""
+
+# Parse arguments
+if [ $# -gt 0 ] && [[ ! "$1" =~ ^-- ]]; then
+  BUCKET="$1"
+  shift
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix)
+      PREFIX="$2"
+      shift 2
+      ;;
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    *)
+      echo "Usage: cloud-s3-list [BUCKET] [--prefix PREFIX] [--profile PROFILE]"
+      exit 1
+      ;;
+  esac
+done
+
+if [ -z "$BUCKET" ]; then
+  # List buckets
+  aws s3api list-buckets --profile "$PROFILE" --query 'Buckets[].[Name,CreationDate]' --output json | \
+    jq -r '.[] | "\(.[0]) (created: \(.[1] | split("T")[0]))"'
+else
+  # List objects in bucket
+  if [ -n "$PREFIX" ]; then
+    aws s3api list-objects-v2 --profile "$PROFILE" --bucket "$BUCKET" --prefix "$PREFIX" --query 'Contents[].[Key,Size,LastModified]' --output json | \
+      jq -r '.[]? | "\(.[0]) (\(.[1] | tonumber / 1024 | floor)KB) modified: \(.[2] | split("T")[0])"'
+  else
+    aws s3api list-objects-v2 --profile "$PROFILE" --bucket "$BUCKET" --query 'Contents[].[Key,Size,LastModified]' --output json | \
+      jq -r '.[]? | "\(.[0]) (\(.[1] | tonumber / 1024 | floor)KB) modified: \(.[2] | split("T")[0])"'
+  fi
+fi

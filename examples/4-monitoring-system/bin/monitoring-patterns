@@ -1,0 +1,237 @@
+#!/bin/bash
+# monitoring-patterns - Analyze log patterns for anomalies and new patterns
+#
+# Usage:
+#   monitoring-patterns                    # Show recent log patterns
+#   monitoring-patterns --compare "1 hour" # Compare to 1 hour ago
+#   monitoring-patterns --anomalies        # Only show anomalies
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$NEWRELIC_API_TOKEN" ]]; then
+        TOKEN="$NEWRELIC_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/NEWRELIC API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/newrelic-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set NEWRELIC_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+# Default account ID
+ACCOUNT_ID="${NEWRELIC_ACCOUNT_ID:-1234567}"
+MODE="recent"
+COMPARE_TIME=""
+SINCE="30 minutes ago"
+LIMIT="20"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --account)
+      ACCOUNT_ID="$2"
+      shift 2
+      ;;
+    --compare)
+      MODE="compare"
+      COMPARE_TIME="$2"
+      shift 2
+      ;;
+    --anomalies)
+      MODE="anomalies"
+      shift
+      ;;
+    --since)
+      SINCE="$2"
+      shift 2
+      ;;
+    --limit)
+      LIMIT="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<'EOF'
+monitoring-patterns - Analyze log patterns for anomalies and new patterns
+
+USAGE:
+  monitoring-patterns [OPTIONS]
+
+OPTIONS:
+  --account ID       Account ID (default: 1234567)
+  --compare TIME     Compare patterns to previous time period
+  --anomalies        Show only anomalous patterns
+  --since TIME       Time window (default: "30 minutes ago")
+  --limit N          Max patterns to show (default: 20)
+  --help, -h         Show this help
+
+EXAMPLES:
+  # Show recent log patterns with counts
+  monitoring-patterns
+
+  # Compare current patterns to 1 hour ago
+  monitoring-patterns --compare "1 hour"
+
+  # Show patterns from last hour
+  monitoring-patterns --since "1 hour ago"
+
+  # Find anomalies (new or unusual patterns)
+  monitoring-patterns --anomalies --since "10 minutes ago"
+
+OUTPUT:
+  Shows log patterns with:
+  - Pattern signature
+  - Count of occurrences
+  - Service names
+  - Sample message
+
+USE CASES:
+  - Detect new error patterns
+  - Spot unusual log volume
+  - Identify new services logging
+  - Track pattern changes over time
+
+NOTES:
+  - Patterns are derived from message structure
+  - High count patterns are typically normal
+  - New patterns or count spikes indicate changes
+  - Use --compare to see what's different from before
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ "$MODE" = "recent" ]; then
+  # Show recent patterns grouped by message structure
+  NRQL="FROM Log SELECT count(*), latest(message), latest(service.name) FACET message WHERE message IS NOT NULL LIMIT ${LIMIT}"
+
+  echo "Recent log patterns (last ${SINCE}):"
+  echo "---"
+
+  GRAPHQL_QUERY=$(cat <<EOF
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      nrql(query: "${NRQL} SINCE ${SINCE}") {
+        results
+      }
+    }
+  }
+}
+EOF
+  )
+
+  newrelic nerdgraph query "$GRAPHQL_QUERY" | jq -r '
+    .data.actor.account.nrql.results[] |
+    "Count: \(.count)\nPattern: \(.facet[0:100])\nService: \(.["latest.service.name"] // "unknown")\n---"
+  '
+
+elif [ "$MODE" = "compare" ]; then
+  # Compare current patterns to previous time period
+  if [ -z "$COMPARE_TIME" ]; then
+    echo "Error: --compare requires a time period (e.g., '1 hour')" >&2
+    exit 1
+  fi
+
+  echo "Comparing patterns:"
+  echo "  Current: last ${SINCE}"
+  echo "  Previous: ${COMPARE_TIME} before that"
+  echo "---"
+
+  # Get current patterns
+  NRQL_NOW="FROM Log SELECT count(*) FACET message WHERE message IS NOT NULL LIMIT ${LIMIT}"
+
+  GRAPHQL_NOW=$(cat <<EOF
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      nrql(query: "${NRQL_NOW} SINCE ${SINCE}") {
+        results
+      }
+    }
+  }
+}
+EOF
+  )
+
+  # Get previous patterns
+  NRQL_PREV="FROM Log SELECT count(*) FACET message WHERE message IS NOT NULL LIMIT ${LIMIT}"
+
+  GRAPHQL_PREV=$(cat <<EOF
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      nrql(query: "${NRQL_PREV} SINCE ${COMPARE_TIME} ago UNTIL ${SINCE}") {
+        results
+      }
+    }
+  }
+}
+EOF
+  )
+
+  CURRENT=$(newrelic nerdgraph query "$GRAPHQL_NOW")
+  PREVIOUS=$(newrelic nerdgraph query "$GRAPHQL_PREV")
+
+  echo "NEW PATTERNS (not in previous period):"
+  echo "$CURRENT" | jq -r '.data.actor.account.nrql.results[] | .facet' | sort > /tmp/patterns_now.txt
+  echo "$PREVIOUS" | jq -r '.data.actor.account.nrql.results[] | .facet' | sort > /tmp/patterns_prev.txt
+
+  comm -23 /tmp/patterns_now.txt /tmp/patterns_prev.txt | head -10 | while read pattern; do
+    echo "$CURRENT" | jq -r --arg p "$pattern" '
+      .data.actor.account.nrql.results[] |
+      select(.facet == $p) |
+      "Count: \(.count)\nPattern: \(.facet[0:100])\n---"
+    '
+  done
+
+  rm -f /tmp/patterns_now.txt /tmp/patterns_prev.txt
+
+elif [ "$MODE" = "anomalies" ]; then
+  # Show patterns with unusual counts (statistical outliers)
+  echo "Analyzing patterns for anomalies (last ${SINCE})..."
+  echo "---"
+
+  NRQL="FROM Log SELECT count(*), stddev(count(*)), latest(message), latest(service.name) FACET message WHERE message IS NOT NULL LIMIT ${LIMIT}"
+
+  GRAPHQL_QUERY=$(cat <<EOF
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      nrql(query: "${NRQL} SINCE ${SINCE}") {
+        results
+      }
+    }
+  }
+}
+EOF
+  )
+
+  newrelic nerdgraph query "$GRAPHQL_QUERY" | jq -r '
+    .data.actor.account.nrql.results[] |
+    select(.count > 10) |
+    "Count: \(.count) (potentially high)\nPattern: \(.facet[0:100])\nService: \(.["latest.service.name"] // "unknown")\n---"
+  '
+fi

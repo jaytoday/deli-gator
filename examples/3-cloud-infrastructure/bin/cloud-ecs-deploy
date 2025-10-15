@@ -1,0 +1,78 @@
+#!/bin/bash
+# Force new ECS service deployment
+# Usage: cloud-ecs-deploy SERVICE ENVIRONMENT [--profile PROFILE]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$AWS_API_TOKEN" ]]; then
+        TOKEN="$AWS_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/AWS API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/aws-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set AWS_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+PROFILE="${AWS_PROFILE:-default}"
+REGION="us-east-1"
+
+if [ $# -lt 2 ]; then
+  echo "Usage: cloud-ecs-deploy SERVICE ENVIRONMENT [--profile PROFILE]"
+  echo "Example: cloud-ecs-deploy git_lumber_mill-mediawiki production"
+  exit 1
+fi
+
+SERVICE="$1"
+ENVIRONMENT="$2"
+shift 2
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    --region)
+      REGION="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
+
+CLUSTER="examplejobinc-ecs-${ENVIRONMENT}"
+
+echo "Force deploying $SERVICE in $CLUSTER..."
+
+RESULT=$(aws ecs update-service \
+  --profile "$PROFILE" \
+  --region "$REGION" \
+  --cluster "$CLUSTER" \
+  --service "$SERVICE" \
+  --force-new-deployment \
+  --query 'service.[serviceName,status,deployments[0].status,deployments[0].id]' \
+  --output json)
+
+echo "$RESULT" | jq -r '. | "✓ Deployment initiated: \(.[0])\n  Status: \(.[1])\n  Deployment: \(.[2]) (\(.[3]))"'

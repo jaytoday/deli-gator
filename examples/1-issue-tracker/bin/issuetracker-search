@@ -1,0 +1,136 @@
+#!/bin/bash
+# Search Acme Jira issues
+# Usage: issuetracker-search "keyword" [--mine] [--open] [--limit N]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$JIRA_API_TOKEN" ]]; then
+        TOKEN="$JIRA_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/JIRA API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/jira-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set JIRA_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+
+# Defaults
+KEYWORD=""
+MINE=false
+OPEN=false
+LIMIT=10
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --mine)
+      MINE=true
+      shift
+      ;;
+    --open)
+      OPEN=true
+      shift
+      ;;
+    --limit)
+      LIMIT="$2"
+      shift 2
+      ;;
+    --help)
+      echo "Usage: issuetracker-search [keyword] [--mine] [--open] [--limit N]"
+      echo ""
+      echo "Options:"
+      echo "  keyword       Search text (optional)"
+      echo "  --mine        Show only issues assigned to me"
+      echo "  --open        Show only open issues (status != Done)"
+      echo "  --limit N     Max results (default: 10)"
+      echo ""
+      echo "Examples:"
+      echo "  issuetracker-search deployment"
+      echo "  issuetracker-search --mine --open"
+      echo "  issuetracker-search nginx --limit 20"
+      exit 0
+      ;;
+    *)
+      KEYWORD="$1"
+      shift
+      ;;
+  esac
+done
+
+# Build JQL query
+JQL=""
+
+if [ -n "$KEYWORD" ]; then
+  JQL="text ~ \"$KEYWORD\""
+fi
+
+if [ "$MINE" = true ]; then
+  if [ -n "$JQL" ]; then
+    JQL="$JQL AND assignee = \"user@example.com\""
+  else
+    JQL="assignee = \"user@example.com\""
+  fi
+fi
+
+if [ "$OPEN" = true ]; then
+  if [ -n "$JQL" ]; then
+    JQL="$JQL AND status != Done"
+  else
+    JQL="status != Done"
+  fi
+fi
+
+# Default to showing all issues if no filters
+if [ -z "$JQL" ]; then
+  JQL="ORDER BY updated DESC"
+else
+  JQL="$JQL ORDER BY updated DESC"
+fi
+
+echo "Searching: $JQL"
+echo ""
+
+RESPONSE=$(curl --http1.1 -s -X POST \
+  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | base64)" \
+  -H "Content-Type: application/json" \
+  --data "$(jq -n --arg jql "$JQL" --argjson max "$LIMIT" '{jql: $jql, maxResults: $max, fields: ["summary", "status", "assignee", "updated"]}')" \
+  "https://example.atlassian.net/rest/api/3/search/jql")
+
+if echo "$RESPONSE" | jq -e '.errorMessages' >/dev/null 2>&1; then
+  echo "Error: $(echo "$RESPONSE" | jq -r '.errorMessages | join(", ")')"
+  exit 1
+fi
+
+COUNT=$(echo "$RESPONSE" | jq '.issues | length')
+
+if [ "$COUNT" -eq 0 ]; then
+  echo "No issues found."
+  exit 0
+fi
+
+echo "Found $COUNT issue(s):"
+echo ""
+
+echo "$RESPONSE" | jq -r '.issues[] |
+  "  \(.key): \(.fields.summary)\n" +
+  "    Status: \(.fields.status.name) | Assignee: \(.fields.assignee.displayName // "Unassigned")\n" +
+  "    https://example.atlassian.net/browse/\(.key)\n"'

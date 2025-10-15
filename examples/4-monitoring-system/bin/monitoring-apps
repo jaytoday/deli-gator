@@ -1,0 +1,149 @@
+#!/bin/bash
+# monitoring-apps - List monitored applications and services
+#
+# Usage:
+#   monitoring-apps                    # List all applications
+#   monitoring-apps --search "examplejobinc"     # Search for applications
+#   monitoring-apps --type APM         # Filter by entity type
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$NEWRELIC_API_TOKEN" ]]; then
+        TOKEN="$NEWRELIC_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/NEWRELIC API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/newrelic-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set NEWRELIC_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+# Default account ID
+ACCOUNT_ID="${NEWRELIC_ACCOUNT_ID:-1234567}"
+SEARCH=""
+TYPE=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --account)
+      ACCOUNT_ID="$2"
+      shift 2
+      ;;
+    --search)
+      SEARCH="$2"
+      shift 2
+      ;;
+    --type)
+      TYPE="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<'EOF'
+monitoring-apps - List monitored applications and services
+
+USAGE:
+  monitoring-apps [OPTIONS]
+
+OPTIONS:
+  --account ID    Account ID (default: 1234567)
+  --search NAME   Search for applications by name
+  --type TYPE     Filter by entity type (APM, BROWSER, MOBILE, HOST)
+  --help, -h      Show this help
+
+EXAMPLES:
+  # List all applications
+  monitoring-apps
+
+  # Search for Acme applications
+  monitoring-apps --search "examplejobinc"
+
+  # List only APM applications
+  monitoring-apps --type APM
+
+  # Search for nginx
+  monitoring-apps --search "nginx"
+
+OUTPUT:
+  Lists monitored entities including:
+  - Entity name
+  - Entity type
+  - GUID
+  - Reporting status
+  - Alert status
+
+ENTITY TYPES:
+  - APM: Application Performance Monitoring
+  - BROWSER: Browser monitoring
+  - MOBILE: Mobile app monitoring
+  - HOST: Infrastructure hosts
+  - AWSLAMBDAFUNCTION: Lambda functions
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Build search filter
+SEARCH_FILTER=""
+if [ -n "$SEARCH" ]; then
+  SEARCH_FILTER="name LIKE '%${SEARCH}%'"
+fi
+if [ -n "$TYPE" ]; then
+  if [ -n "$SEARCH_FILTER" ]; then
+    SEARCH_FILTER="$SEARCH_FILTER AND type = '${TYPE}'"
+  else
+    SEARCH_FILTER="type = '${TYPE}'"
+  fi
+fi
+
+# If no filter, show all
+if [ -z "$SEARCH_FILTER" ]; then
+  SEARCH_FILTER="type IN ('APM_APPLICATION_ENTITY', 'BROWSER_APPLICATION_ENTITY', 'MOBILE_APPLICATION_ENTITY', 'INFRASTRUCTURE_HOST_ENTITY')"
+fi
+
+# Fetch entities
+ENTITIES_JSON=$(newrelic nerdgraph query '{
+  actor {
+    entitySearch(query: "'"${SEARCH_FILTER}"'") {
+      results {
+        entities {
+          name
+          entityType
+          guid
+          reporting
+          alertSeverity
+          domain
+        }
+      }
+    }
+  }
+}')
+
+# Pretty print
+echo "$ENTITIES_JSON" | jq -r '
+  .data.actor.entitySearch.results.entities[] |
+  "Name: \(.name)\nType: \(.entityType // .domain)\nGUID: \(.guid)\nReporting: \(.reporting)\nAlerts: \(.alertSeverity // "NONE")\n---"
+'

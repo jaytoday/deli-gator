@@ -1,0 +1,86 @@
+#!/bin/bash
+# Add comment to Acme Jira issue
+# Usage: issuetracker-comment PROJ-1234 "comment text"
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$JIRA_API_TOKEN" ]]; then
+        TOKEN="$JIRA_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/JIRA API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/jira-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set JIRA_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+
+if [ $# -lt 2 ]; then
+  echo "Usage: issuetracker-comment ISSUE-KEY \"comment text\""
+  echo "Example: issuetracker-comment PROJ-1234 \"Deployed commit abc123\""
+  exit 1
+fi
+
+ISSUE_KEY="$1"
+COMMENT_TEXT="$2"
+
+# Escape special characters for JSON
+ESCAPED_TEXT=$(echo "$COMMENT_TEXT" | jq -Rs .)
+
+# Build ADF format comment
+COMMENT_JSON=$(cat <<EOF
+{
+  "body": {
+    "type": "doc",
+    "version": 1,
+    "content": [
+      {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": $ESCAPED_TEXT
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+
+echo "Adding comment to $ISSUE_KEY..."
+
+RESPONSE=$(curl --http1.1 -s -X POST \
+  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | base64)" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  --data "$COMMENT_JSON" \
+  "https://example.atlassian.net/rest/api/3/issue/$ISSUE_KEY/comment")
+
+if echo "$RESPONSE" | jq -e '.errorMessages' >/dev/null 2>&1; then
+  echo "Error: $(echo "$RESPONSE" | jq -r '.errorMessages | join(", ")')"
+  exit 1
+else
+  COMMENT_ID=$(echo "$RESPONSE" | jq -r '.id')
+  echo "✓ Comment $COMMENT_ID added to $ISSUE_KEY"
+  echo "URL: https://example.atlassian.net/browse/$ISSUE_KEY"
+fi

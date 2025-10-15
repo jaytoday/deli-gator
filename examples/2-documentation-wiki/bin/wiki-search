@@ -1,0 +1,82 @@
+#!/bin/bash
+# wiki-search - Search Confluence pages
+# Usage: wiki-search "search query" [SPACE_KEY]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$CONFLUENCE_API_TOKEN" ]]; then
+        TOKEN="$CONFLUENCE_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/CONFLUENCE API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/confluence-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set CONFLUENCE_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -e
+
+BASE_URL="https://example.atlassian.net/wiki"
+
+QUERY="$1"
+SPACE_KEY="$2"
+
+if [[ -z "$QUERY" ]]; then
+    echo "Usage: wiki-search \"search query\" [SPACE_KEY]"
+    echo ""
+    echo "Search for Confluence pages by text"
+    echo ""
+    echo "Examples:"
+    echo "  wiki-search \"S3 bucket\""
+    echo "  wiki-search \"Fastly\" OPS"
+    exit 1
+fi
+
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+
+# Build CQL query
+if [[ -n "$SPACE_KEY" ]]; then
+    CQL="space=$SPACE_KEY AND text~\"$QUERY\""
+else
+    CQL="text~\"$QUERY\""
+fi
+
+# URL encode the CQL
+CQL_ENCODED=$(echo -n "$CQL" | jq -sRr @uri)
+
+echo "Searching: $CQL" >&2
+
+# Search
+RESPONSE=$(curl --http1.1 -s -X GET \
+  -H "Authorization: Basic $AUTH_HEADER" \
+  "$BASE_URL/rest/api/content/search?cql=$CQL_ENCODED&limit=20")
+
+# Check for errors
+if echo "$RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
+    echo "Error: $(echo "$RESPONSE" | jq -r '.message')" >&2
+    exit 1
+fi
+
+# Format results
+echo "$RESPONSE" | jq -r '.results[] | {
+    id: .id,
+    title: .title,
+    space: .space.key,
+    url: (.["_links"].base + .["_links"].webui)
+}'

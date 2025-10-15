@@ -1,0 +1,110 @@
+#!/bin/bash
+# wiki-update - Update Confluence page content
+# Usage: wiki-update PAGE_ID "New content HTML" ["Optional title"]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$CONFLUENCE_API_TOKEN" ]]; then
+        TOKEN="$CONFLUENCE_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/CONFLUENCE API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/confluence-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set CONFLUENCE_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -e
+
+BASE_URL="https://example.atlassian.net/wiki"
+
+PAGE_ID="$1"
+NEW_CONTENT="$2"
+NEW_TITLE="$3"
+
+if [[ -z "$PAGE_ID" ]] || [[ -z "$NEW_CONTENT" ]]; then
+    echo "Usage: wiki-update PAGE_ID \"New content HTML\" [\"Optional title\"]"
+    echo ""
+    echo "Update a Confluence page with new content"
+    echo ""
+    echo "IMPORTANT: Content must be Confluence Storage Format (HTML with macros)"
+    echo ""
+    echo "Examples:"
+    echo "  wiki-update 123456789 \"<p>New content</p>\""
+    echo "  wiki-update 123456789 \"<p>New content</p>\" \"New Title\""
+    exit 1
+fi
+
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+
+# Fetch current page to get version and title
+echo "Fetching current page..." >&2
+CURRENT=$(curl --http1.1 -s -X GET \
+  -H "Authorization: Basic $AUTH_HEADER" \
+  "$BASE_URL/rest/api/content/$PAGE_ID?expand=version")
+
+CURRENT_VERSION=$(echo "$CURRENT" | jq -r '.version.number')
+CURRENT_TITLE=$(echo "$CURRENT" | jq -r '.title')
+
+# Use provided title or keep current
+TITLE="${NEW_TITLE:-$CURRENT_TITLE}"
+NEW_VERSION=$((CURRENT_VERSION + 1))
+
+echo "Current version: $CURRENT_VERSION" >&2
+echo "New version: $NEW_VERSION" >&2
+echo "Title: $TITLE" >&2
+
+# Create update payload
+PAYLOAD=$(jq -n \
+  --argjson version "$NEW_VERSION" \
+  --arg title "$TITLE" \
+  --arg content "$NEW_CONTENT" \
+  '{
+    version: {number: $version},
+    title: $title,
+    type: "page",
+    body: {
+      storage: {
+        value: $content,
+        representation: "storage"
+      }
+    }
+  }')
+
+# Update page
+echo "Updating page..." >&2
+RESPONSE=$(curl --http1.1 -s -X PUT \
+  -H "Authorization: Basic $AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD" \
+  "$BASE_URL/rest/api/content/$PAGE_ID")
+
+# Check for errors
+if echo "$RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
+    echo "Error: $(echo "$RESPONSE" | jq -r '.message')" >&2
+    exit 1
+fi
+
+echo "Success!" >&2
+echo "$RESPONSE" | jq '{
+    id: .id,
+    title: .title,
+    version: .version.number,
+    url: (.["_links"].base + .["_links"].webui)
+}'

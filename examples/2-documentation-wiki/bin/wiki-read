@@ -1,0 +1,84 @@
+#!/bin/bash
+# wiki-read - Read Confluence page content
+# Usage: wiki-read PAGE_ID [--with-version]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$CONFLUENCE_API_TOKEN" ]]; then
+        TOKEN="$CONFLUENCE_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/CONFLUENCE API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/confluence-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set CONFLUENCE_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -e
+
+BASE_URL="https://example.atlassian.net/wiki"
+
+# Parse arguments
+PAGE_ID="$1"
+WITH_VERSION="false"
+
+if [[ "$2" == "--with-version" ]]; then
+    WITH_VERSION="true"
+fi
+
+if [[ -z "$PAGE_ID" ]]; then
+    echo "Usage: wiki-read PAGE_ID [--with-version]"
+    echo ""
+    echo "Read content from a Confluence page"
+    echo ""
+    echo "Examples:"
+    echo "  wiki-read 123456789"
+    echo "  wiki-read 123456789 --with-version"
+    exit 1
+fi
+
+# Fetch page
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+
+RESPONSE=$(curl --http1.1 -s -X GET \
+  -H "Authorization: Basic $AUTH_HEADER" \
+  "$BASE_URL/rest/api/content/$PAGE_ID?expand=body.storage,version")
+
+# Check for errors
+if echo "$RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
+    echo "Error: $(echo "$RESPONSE" | jq -r '.message')" >&2
+    exit 1
+fi
+
+if [[ "$WITH_VERSION" == "true" ]]; then
+    # Output with version info for updates
+    echo "$RESPONSE" | jq '{
+        id: .id,
+        title: .title,
+        version: .version.number,
+        content: .body.storage.value
+    }'
+else
+    # Output just the content and title
+    echo "$RESPONSE" | jq '{
+        id: .id,
+        title: .title,
+        content: .body.storage.value
+    }'
+fi

@@ -1,0 +1,145 @@
+#!/bin/bash
+# monitoring-logs - Quick log searching and analysis
+#
+# Usage:
+#   monitoring-logs "error"            # Search for "error" in logs
+#   monitoring-logs --service nginx    # Logs from nginx service
+#   monitoring-logs --since "1 hour"   # Time window
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$NEWRELIC_API_TOKEN" ]]; then
+        TOKEN="$NEWRELIC_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/NEWRELIC API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/newrelic-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set NEWRELIC_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+# Default account ID
+ACCOUNT_ID="${NEWRELIC_ACCOUNT_ID:-1234567}"
+SINCE="10 minutes ago"
+SEARCH=""
+SERVICE=""
+LIMIT="100"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --account)
+      ACCOUNT_ID="$2"
+      shift 2
+      ;;
+    --since)
+      SINCE="$2 ago"
+      shift 2
+      ;;
+    --service)
+      SERVICE="$2"
+      shift 2
+      ;;
+    --limit)
+      LIMIT="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<'EOF'
+monitoring-logs - Quick log searching and analysis
+
+USAGE:
+  monitoring-logs [OPTIONS] [search_term]
+
+OPTIONS:
+  --account ID     Account ID (default: 1234567)
+  --since TIME     Time window (default: "10 minutes ago")
+  --service NAME   Filter by service name
+  --limit N        Max results (default: 100)
+  --help, -h       Show this help
+
+EXAMPLES:
+  # Search for "error" in recent logs
+  monitoring-logs "error"
+
+  # Logs from nginx service in last hour
+  monitoring-logs --service nginx --since "1 hour"
+
+  # Get last 50 logs
+  monitoring-logs --limit 50
+
+  # Search for specific error code
+  monitoring-logs "502"
+
+OUTPUT:
+  Returns log entries with:
+  - Timestamp
+  - Message
+  - Service name
+  - Additional fields
+
+NOTES:
+  - Searches across all log sources
+  - Use --service to narrow scope
+  - Default time window is 10 minutes
+EOF
+      exit 0
+      ;;
+    *)
+      SEARCH="$1"
+      shift
+      ;;
+  esac
+done
+
+# Build NRQL query
+WHERE_CLAUSE=""
+if [ -n "$SEARCH" ]; then
+  WHERE_CLAUSE="WHERE message LIKE '%${SEARCH}%'"
+fi
+if [ -n "$SERVICE" ]; then
+  if [ -n "$WHERE_CLAUSE" ]; then
+    WHERE_CLAUSE="$WHERE_CLAUSE AND service.name = '${SERVICE}'"
+  else
+    WHERE_CLAUSE="WHERE service.name = '${SERVICE}'"
+  fi
+fi
+
+NRQL="FROM Log SELECT timestamp, message, service.name, hostname ${WHERE_CLAUSE} LIMIT ${LIMIT}"
+
+# Execute query
+GRAPHQL_QUERY=$(cat <<EOF
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      nrql(query: "${NRQL} SINCE ${SINCE}") {
+        results
+      }
+    }
+  }
+}
+EOF
+)
+
+newrelic nerdgraph query "$GRAPHQL_QUERY" | jq -r '
+  .data.actor.account.nrql.results[] |
+  "[\(.timestamp // "no-time")] \(.["service.name"] // "unknown-service"): \(.message // "(no message)")"
+'

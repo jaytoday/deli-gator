@@ -1,0 +1,82 @@
+#!/bin/bash
+# List EC2 instances with filters
+# Usage: cloud-ec2-list [--state STATE] [--name PATTERN] [--profile PROFILE]
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$AWS_API_TOKEN" ]]; then
+        TOKEN="$AWS_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/AWS API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/aws-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set AWS_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+PROFILE="${AWS_PROFILE:-default}"
+STATE_FILTER=""
+NAME_FILTER=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --state)
+      STATE_FILTER="$2"
+      shift 2
+      ;;
+    --name)
+      NAME_FILTER="$2"
+      shift 2
+      ;;
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    *)
+      echo "Usage: cloud-ec2-list [--state STATE] [--name PATTERN] [--profile PROFILE]"
+      exit 1
+      ;;
+  esac
+done
+
+# Build filter query
+FILTERS=""
+if [ -n "$STATE_FILTER" ]; then
+  FILTERS="Name=instance-state-name,Values=$STATE_FILTER"
+fi
+
+if [ -n "$NAME_FILTER" ]; then
+  if [ -n "$FILTERS" ]; then
+    FILTERS="$FILTERS Name=tag:Name,Values=$NAME_FILTER"
+  else
+    FILTERS="Name=tag:Name,Values=$NAME_FILTER"
+  fi
+fi
+
+# Query AWS
+if [ -n "$FILTERS" ]; then
+  RESULT=$(aws ec2 describe-instances --profile "$PROFILE" --filters $FILTERS --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],State.Name,InstanceType,PrivateIpAddress]' --output json)
+else
+  RESULT=$(aws ec2 describe-instances --profile "$PROFILE" --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],State.Name,InstanceType,PrivateIpAddress]' --output json)
+fi
+
+# Format output
+echo "$RESULT" | jq -r '.[] | "\(.[0]) (\(.[1] // "unnamed")) [\(.[2])] \(.[3]) \(.[4] // "no-ip")"'

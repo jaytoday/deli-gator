@@ -1,0 +1,115 @@
+#!/bin/bash
+# monitoring-query - Execute NRQL queries against New Relic
+#
+# Usage:
+#   monitoring-query "FROM Log SELECT count(*) WHERE message IS NULL"
+#   monitoring-query --since "10 minutes ago" "FROM Transaction SELECT count(*)"
+#   monitoring-query --account 1234567 "FROM Metric SELECT average(duration)"
+
+
+# Load credentials from environment or secure storage
+load_credentials() {
+    # Try environment variables first
+    if [[ -n "$NEWRELIC_API_TOKEN" ]]; then
+        TOKEN="$NEWRELIC_API_TOKEN"
+        return 0
+    fi
+
+    # Try 1Password (if available)
+    if command -v op &> /dev/null; then
+        TOKEN=$(op read "op://Private/NEWRELIC API/credential" 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    # Try Keybase (if available)
+    if command -v keybase &> /dev/null; then
+        TOKEN=$(keybase fs read /keybase/private/$(keybase whoami)/newrelic-token 2>/dev/null) || true
+        if [[ -n "$TOKEN" ]]; then return 0; fi
+    fi
+
+    echo "Error: Credentials not found. Set NEWRELIC_API_TOKEN environment variable." >&2
+    exit 1
+}
+
+# Load credentials
+load_credentials
+
+set -euo pipefail
+
+# Default account ID
+ACCOUNT_ID="${NEWRELIC_ACCOUNT_ID:-1234567}"
+SINCE="5 minutes ago"
+QUERY=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --account)
+      ACCOUNT_ID="$2"
+      shift 2
+      ;;
+    --since)
+      SINCE="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<'EOF'
+monitoring-query - Execute NRQL queries against New Relic
+
+USAGE:
+  monitoring-query [OPTIONS] <nrql_query>
+
+OPTIONS:
+  --account ID       Account ID (default: 1234567)
+  --since TIMEFRAME  Time window (default: "5 minutes ago")
+  --help, -h         Show this help
+
+EXAMPLES:
+  # Count logs with null messages
+  monitoring-query "FROM Log SELECT count(*) WHERE message IS NULL"
+
+  # Transaction count over 10 minutes
+  monitoring-query --since "10 minutes ago" "FROM Transaction SELECT count(*)"
+
+  # Average response time
+  monitoring-query "FROM Transaction SELECT average(duration)"
+
+  # Group by host
+  monitoring-query "FROM SystemSample SELECT average(cpuPercent) FACET hostname"
+
+NOTES:
+  - SINCE clause is automatically added
+  - Results are JSON formatted
+  - Account defaults to Acme production (1234567)
+EOF
+      exit 0
+      ;;
+    *)
+      QUERY="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$QUERY" ]; then
+  echo "Error: No NRQL query provided" >&2
+  echo "Usage: monitoring-query [OPTIONS] <nrql_query>" >&2
+  echo "Try: monitoring-query --help" >&2
+  exit 1
+fi
+
+# Construct NerdGraph query
+read -r -d '' GRAPHQL_QUERY <<EOF || true
+{
+  actor {
+    account(id: ${ACCOUNT_ID}) {
+      nrql(query: "${QUERY} SINCE ${SINCE}") {
+        results
+      }
+    }
+  }
+}
+EOF
+
+# Execute query
+newrelic nerdgraph query "$GRAPHQL_QUERY"
