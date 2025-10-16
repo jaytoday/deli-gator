@@ -1,0 +1,98 @@
+#!/bin/bash
+# Purge cache for a Fastly service
+# Usage: fastly-purge --service-id SERVICE_ID [--all|--key KEY|--url URL] [--profile PROFILE]
+
+set -euo pipefail
+
+# Default values
+PROFILE="${FASTLY_PROFILE:-user}"
+SERVICE_ID=""
+PURGE_ALL=false
+SURROGATE_KEY=""
+URL=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service-id)
+            SERVICE_ID="$2"
+            shift 2
+            ;;
+        --all)
+            PURGE_ALL=true
+            shift
+            ;;
+        --key)
+            SURROGATE_KEY="$2"
+            shift 2
+            ;;
+        --url)
+            URL="$2"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: fastly-purge --service-id SERVICE_ID [--all|--key KEY|--url URL] [--profile PROFILE]"
+            echo ""
+            echo "Purge cache for a Fastly service"
+            echo ""
+            echo "Options:"
+            echo "  --service-id ID      Fastly service ID (required)"
+            echo "  --all                Purge all cache (use with caution)"
+            echo "  --key KEY            Purge by surrogate key"
+            echo "  --url URL            Purge specific URL"
+            echo "  --profile PROFILE    Fastly profile to use (default: user)"
+            echo ""
+            echo "Examples:"
+            echo "  fastly-purge --service-id abc123xyz --all"
+            echo "  fastly-purge --service-id abc123xyz --key image-cache"
+            echo "  fastly-purge --service-id abc123xyz --url https://example.com/image.png"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$SERVICE_ID" ]]; then
+    echo "Error: --service-id is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Validate that exactly one purge method is specified
+PURGE_COUNT=0
+[[ "$PURGE_ALL" == true ]] && ((PURGE_COUNT++))
+[[ -n "$SURROGATE_KEY" ]] && ((PURGE_COUNT++))
+[[ -n "$URL" ]] && ((PURGE_COUNT++))
+
+if [[ $PURGE_COUNT -eq 0 ]]; then
+    echo "Error: Must specify --all, --key, or --url" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+if [[ $PURGE_COUNT -gt 1 ]]; then
+    echo "Error: Can only specify one of --all, --key, or --url" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Execute Fastly CLI
+if [[ "$PURGE_ALL" == true ]]; then
+    echo "WARNING: Purging ALL cache for service $SERVICE_ID" >&2
+    fastly purge --service-id="$SERVICE_ID" --all --profile="$PROFILE"
+elif [[ -n "$SURROGATE_KEY" ]]; then
+    echo "Purging surrogate key: $SURROGATE_KEY" >&2
+    fastly purge --service-id="$SERVICE_ID" --key="$SURROGATE_KEY" --profile="$PROFILE"
+elif [[ -n "$URL" ]]; then
+    echo "Purging URL: $URL" >&2
+    fastly purge --url="$URL" --profile="$PROFILE"
+fi

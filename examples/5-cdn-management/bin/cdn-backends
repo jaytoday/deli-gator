@@ -1,0 +1,58 @@
+#!/bin/bash
+# List backends for a Fastly service
+# Usage: fastly-backends --service-id SERVICE_ID [--version VERSION] [--profile PROFILE]
+
+set -euo pipefail
+
+# Default values
+PROFILE="${FASTLY_PROFILE:-user}"
+SERVICE_ID=""
+VERSION="active"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service-id)
+            SERVICE_ID="$2"
+            shift 2
+            ;;
+        --version)
+            VERSION="$2"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: fastly-backends --service-id SERVICE_ID [--version VERSION] [--profile PROFILE]"
+            echo ""
+            echo "List all backends for a Fastly service"
+            echo ""
+            echo "Options:"
+            echo "  --service-id ID      Fastly service ID (required)"
+            echo "  --version VERSION    Service version (default: active)"
+            echo "  --profile PROFILE    Fastly profile to use (default: user)"
+            echo ""
+            echo "Examples:"
+            echo "  fastly-backends --service-id abc123xyz"
+            echo "  fastly-backends --service-id abc123xyz --version 42"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$SERVICE_ID" ]]; then
+    echo "Error: --service-id is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Execute Fastly CLI
+fastly backend list --service-id="$SERVICE_ID" --version="$VERSION" --profile="$PROFILE"

@@ -1,0 +1,46 @@
+#!/bin/bash
+# List all Fastly CDN services for ExampleJobInc
+# Usage: fastly-services [--profile PROFILE]
+
+set -euo pipefail
+
+# Default values
+PROFILE="${FASTLY_PROFILE:-user}"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: fastly-services [--profile PROFILE]"
+            echo ""
+            echo "List all Fastly CDN services"
+            echo ""
+            echo "Options:"
+            echo "  --profile PROFILE    Fastly profile to use (default: user)"
+            echo ""
+            echo "Examples:"
+            echo "  fastly-services"
+            echo "  fastly-services --profile user"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Execute Fastly CLI
+fastly service list --profile="$PROFILE" --json | \
+    jq -r '.[] | {
+        id: .ServiceID,
+        name: .Name,
+        type: .Type,
+        updated: .UpdatedAt
+    }' | \
+    jq -s '.'

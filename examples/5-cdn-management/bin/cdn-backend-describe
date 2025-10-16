@@ -1,0 +1,70 @@
+#!/bin/bash
+# Describe a specific backend for a Fastly service
+# Usage: fastly-backend-describe --service-id SERVICE_ID --name BACKEND_NAME [--version VERSION] [--profile PROFILE]
+
+set -euo pipefail
+
+# Default values
+PROFILE="${FASTLY_PROFILE:-user}"
+SERVICE_ID=""
+BACKEND_NAME=""
+VERSION="active"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service-id)
+            SERVICE_ID="$2"
+            shift 2
+            ;;
+        --name)
+            BACKEND_NAME="$2"
+            shift 2
+            ;;
+        --version)
+            VERSION="$2"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: fastly-backend-describe --service-id SERVICE_ID --name BACKEND_NAME [--version VERSION] [--profile PROFILE]"
+            echo ""
+            echo "Describe a specific backend for a Fastly service"
+            echo ""
+            echo "Options:"
+            echo "  --service-id ID      Fastly service ID (required)"
+            echo "  --name NAME          Backend name (required)"
+            echo "  --version VERSION    Service version (default: active)"
+            echo "  --profile PROFILE    Fastly profile to use (default: user)"
+            echo ""
+            echo "Examples:"
+            echo "  fastly-backend-describe --service-id abc123xyz --name origin-server"
+            echo "  fastly-backend-describe --service-id abc123xyz --name origin --version 42"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$SERVICE_ID" ]]; then
+    echo "Error: --service-id is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+if [[ -z "$BACKEND_NAME" ]]; then
+    echo "Error: --name is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Execute Fastly CLI
+fastly backend describe --service-id="$SERVICE_ID" --version="$VERSION" --name="$BACKEND_NAME" --profile="$PROFILE"

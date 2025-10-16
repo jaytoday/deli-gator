@@ -1,0 +1,52 @@
+#!/bin/bash
+# List VCL configurations for a Fastly service
+# Usage: fastly-vcl-list --service-id SERVICE_ID [--profile PROFILE]
+
+set -euo pipefail
+
+# Default values
+PROFILE="${FASTLY_PROFILE:-user}"
+SERVICE_ID=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service-id)
+            SERVICE_ID="$2"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: fastly-vcl-list --service-id SERVICE_ID [--profile PROFILE]"
+            echo ""
+            echo "List all VCL configurations for a Fastly service"
+            echo ""
+            echo "Options:"
+            echo "  --service-id ID      Fastly service ID (required)"
+            echo "  --profile PROFILE    Fastly profile to use (default: user)"
+            echo ""
+            echo "Examples:"
+            echo "  fastly-vcl-list --service-id abc123xyz"
+            echo "  fastly-vcl-list --service-id abc123xyz --profile user"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$SERVICE_ID" ]]; then
+    echo "Error: --service-id is required" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Execute Fastly CLI
+fastly vcl list --service-id="$SERVICE_ID" --profile="$PROFILE"
