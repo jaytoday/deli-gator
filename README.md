@@ -272,6 +272,7 @@ Built with Claude Sonnet 4.5, which itself uses this pattern. Meta? Yes. Effecti
 ## Questions?
 
 Open an issue or reach out on GitHub!
+email ryan@ryan.net , please put "gator" in the subject line somewhere
 
 ---
 
