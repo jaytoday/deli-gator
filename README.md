@@ -10,6 +10,10 @@
 
 An architectural pattern for building AI assistants that don't forget. Keep your main context clean by delegating API queries and specialized tasks to sub-agents.
 
+## What Is This?
+
+A way to quickly turn "this is the way I do THING all the time on my computer" into a claude-code compliant SKILL.md file to be a claude skill.
+
 ## The Problem
 
 When working with AI assistants like Claude, every API interaction pollutes your main context:
