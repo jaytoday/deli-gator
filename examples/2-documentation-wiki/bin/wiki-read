@@ -54,7 +54,7 @@ if [[ -z "$PAGE_ID" ]]; then
 fi
 
 # Fetch page
-AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | openssl base64 -A)
 
 RESPONSE=$(curl --http1.1 -s -X GET \
   -H "Authorization: Basic $AUTH_HEADER" \

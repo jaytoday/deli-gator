@@ -44,7 +44,7 @@ ISSUE_KEY="$1"
 echo "Fetching $ISSUE_KEY..."
 
 curl --http1.1 -s \
-  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | base64)" \
+  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | openssl base64 -A)" \
   -H "Accept: application/json" \
   "https://example.atlassian.net/rest/api/3/issue/$ISSUE_KEY" | \
   jq -r '

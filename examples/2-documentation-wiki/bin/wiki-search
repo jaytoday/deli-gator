@@ -48,7 +48,7 @@ if [[ -z "$QUERY" ]]; then
     exit 1
 fi
 
-AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | openssl base64 -A)
 
 # Build CQL query
 if [[ -n "$SPACE_KEY" ]]; then

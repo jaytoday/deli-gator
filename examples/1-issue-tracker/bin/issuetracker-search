@@ -110,7 +110,7 @@ echo "Searching: $JQL"
 echo ""
 
 RESPONSE=$(curl --http1.1 -s -X POST \
-  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | base64)" \
+  -H "Authorization: Basic $(echo -n "user@example.com:$TOKEN" | openssl base64 -A)" \
   -H "Content-Type: application/json" \
   --data "$(jq -n --arg jql "$JQL" --argjson max "$LIMIT" '{jql: $jql, maxResults: $max, fields: ["summary", "status", "assignee", "updated"]}')" \
   "https://example.atlassian.net/rest/api/3/search/jql")

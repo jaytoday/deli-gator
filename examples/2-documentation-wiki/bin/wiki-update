@@ -51,7 +51,7 @@ if [[ -z "$PAGE_ID" ]] || [[ -z "$NEW_CONTENT" ]]; then
     exit 1
 fi
 
-AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | openssl base64 -A)
 
 # Fetch current page to get version and title
 echo "Fetching current page..." >&2

@@ -55,7 +55,7 @@ if [[ -z "$TITLE" ]] || [[ -z "$CONTENT" ]] || [[ -z "$PARENT_ID" ]]; then
     exit 1
 fi
 
-AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | base64)
+AUTH_HEADER=$(echo -n "user@example.com:$TOKEN" | openssl base64 -A)
 
 # Create payload
 PAYLOAD=$(jq -n \
