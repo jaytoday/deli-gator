@@ -8,6 +8,20 @@
 
 > **Delegation + Agents = Deli-Gator** 🐊
 
+---
+
+## ⚠️ **NOT READY FOR ADOPTION** ⚠️
+
+**This is a personal research project, not a product.**
+
+**Current status:** A collection of markdown files that prod Claude like an 11-year-old with raging ADHD, which is my muse.
+
+**Why it's public:** Sharing methods with coworkers. If you find it useful, great! If you bounce off the directory structure, that's expected.
+
+**Takeaway:** This is about turning "the way I do THING all the time" into systematic patterns. It's nebulous, experimental, and highly personal. Use at your own risk.
+
+---
+
 An architectural pattern for building AI assistants that don't forget. Keep your main context clean by delegating API queries and specialized tasks to sub-agents.
 
 ## What Is This?
